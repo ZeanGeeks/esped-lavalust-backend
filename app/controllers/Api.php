@@ -23,6 +23,7 @@ class Api extends Controller
 
         $this->call->database();
         $this->call->library('session');
+        $this->call->model(['User', 'ResortService', 'Booking', 'ServiceAvailability', 'AdminData']);
         $this->call->library('email_notification_service');
     }
 
@@ -72,6 +73,11 @@ class Api extends Controller
 
     private function issue_csrf_token()
     {
+        $token = $this->session->userdata('api_csrf_token');
+        if (is_string($token) && $token !== '') {
+            return $token;
+        }
+
         $token = bin2hex(random_bytes(32));
         $this->session->set_userdata('api_csrf_token', $token);
         return $token;
@@ -101,15 +107,7 @@ class Api extends Controller
             return null;
         }
 
-        return $this->db->raw(
-            "SELECT user_id AS id, full_name AS username, email, role,
-                    password_hash AS password,
-                    CASE WHEN account_status = 'active' THEN 1 ELSE 0 END AS is_active
-             FROM users
-             WHERE user_id = ?
-             LIMIT 1",
-            [$userId]
-        )->fetch(PDO::FETCH_ASSOC);
+        return $this->User->find_for_session($userId);
     }
 
     private function require_auth($role = null)
@@ -167,13 +165,7 @@ class Api extends Controller
     {
         $dates = $this->daterange($checkInDate, $checkOutDate);
         foreach ($dates as $date) {
-            $availability = $this->db->raw(
-                "SELECT availability_id AS id, service_id, available_date, total_quantity, booked_quantity
-                 FROM service_availability
-                 WHERE service_id = ? AND available_date = ?
-                 LIMIT 1",
-                [$serviceId, $date]
-            )->fetch(PDO::FETCH_ASSOC);
+            $availability = $this->ServiceAvailability->find_for_service_date($serviceId, $date);
 
             if (!$availability || ((int) $availability['booked_quantity'] >= (int) $availability['total_quantity'])) {
                 $this->error('Service is unavailable for one or more selected dates.', 409, ['unavailable_date' => $date]);
@@ -187,13 +179,7 @@ class Api extends Controller
     {
         $dates = $this->daterange($checkInDate, $checkOutDate);
         foreach ($dates as $date) {
-            $row = $this->db->raw(
-                "SELECT availability_id AS id, booked_quantity
-                 FROM service_availability
-                 WHERE service_id = ? AND available_date = ?
-                 LIMIT 1",
-                [$serviceId, $date]
-            )->fetch(PDO::FETCH_ASSOC);
+            $row = $this->ServiceAvailability->find_for_quantity_update($serviceId, $date);
             if (!$row) {
                 continue;
             }
@@ -206,10 +192,7 @@ class Api extends Controller
 
     private function queue_booking_email($booking, $type)
     {
-        $user = $this->db->raw(
-            'SELECT user_id AS id, full_name AS username, email FROM users WHERE user_id = ? LIMIT 1',
-            [(int) $booking['user_id']]
-        )->fetch(PDO::FETCH_ASSOC);
+        $user = $this->User->find_notification_recipient((int) $booking['user_id']);
         if (!$user) {
             return;
         }
@@ -311,29 +294,10 @@ class Api extends Controller
 
         $email = trim((string) ($data['email'] ?? ''));
         $password = (string) ($data['password'] ?? '');
-        $loginAs = trim((string) ($data['login_as'] ?? 'guest'));
 
-        if (!in_array($loginAs, ['guest', 'admin'], true)) {
-            $this->error('Invalid Login as selection.', 422);
-            return;
-        }
-
-        $user = $this->db->raw(
-            "SELECT user_id AS id, full_name AS username, email, role,
-                    password_hash AS password,
-                    CASE WHEN account_status = 'active' THEN 1 ELSE 0 END AS is_active
-             FROM users
-             WHERE email = ?
-             LIMIT 1",
-            [$email]
-        )->fetch(PDO::FETCH_ASSOC);
+        $user = $this->User->find_for_login($email);
         if (!$user || !password_verify($password, $user['password'])) {
             $this->error('Invalid credentials.', 401);
-            return;
-        }
-
-        if ($user['role'] !== $loginAs) {
-            $this->error('Account does not match selected role.', 403);
             return;
         }
 
@@ -411,7 +375,7 @@ class Api extends Controller
             return;
         }
 
-        $duplicate = $this->db->raw("SELECT user_id FROM users WHERE email = ? AND user_id <> ? LIMIT 1", [$email, (int) $user['id']])->fetch(PDO::FETCH_ASSOC);
+        $duplicate = $this->User->email_is_used_by_another_user($email, (int) $user['id']);
         if ($duplicate) {
             $this->error('Email is already in use.', 409);
             return;
@@ -442,10 +406,7 @@ class Api extends Controller
 
         $current = (string) ($data['current_password'] ?? '');
         $next = (string) ($data['new_password'] ?? '');
-        $fullUser = $this->db->raw(
-            'SELECT password_hash AS password FROM users WHERE user_id = ? LIMIT 1',
-            [(int) $user['id']]
-        )->fetch(PDO::FETCH_ASSOC);
+        $fullUser = $this->User->find_password((int) $user['id']);
         if (!$fullUser || !password_verify($current, $fullUser['password'])) {
             $this->error('Current password is incorrect.', 422);
             return;
@@ -466,13 +427,7 @@ class Api extends Controller
         if ($this->method_not_allowed('GET, OPTIONS')) {
             return;
         }
-        $featured = $this->db->raw(
-            "SELECT service_id AS id, service_name AS name, service_type, description, price, capacity
-             FROM services
-             WHERE is_active = 1
-             ORDER BY price ASC
-             LIMIT 6"
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $featured = $this->ResortService->featured();
 
         $this->respond([
             'hero' => [
@@ -504,20 +459,7 @@ class Api extends Controller
             $sort = 'asc';
         }
 
-        $sql = "SELECT service_id AS id, service_name AS name, service_type, description, price, capacity, is_active FROM services WHERE is_active = 1";
-        $params = [];
-        if ($serviceType !== '') {
-            $sql .= " AND service_type = ?";
-            $params[] = $serviceType;
-        }
-        if ($search !== '') {
-            $sql .= " AND (service_name LIKE ? OR description LIKE ?)";
-            $params[] = '%' . $search . '%';
-            $params[] = '%' . $search . '%';
-        }
-        $sql .= " ORDER BY price " . strtoupper($sort);
-
-        $services = $this->db->raw($sql, $params)->fetchAll(PDO::FETCH_ASSOC);
+        $services = $this->ResortService->search_active($search, $serviceType, $sort);
         $this->respond(['services' => $services]);
     }
 
@@ -541,13 +483,7 @@ class Api extends Controller
             return;
         }
 
-        $services = $this->db->raw(
-            "SELECT service_id AS id, service_name AS name, service_type, description, price, capacity
-             FROM services
-             WHERE is_active = 1 AND price <= ? AND capacity >= ?
-             ORDER BY price ASC",
-            [$maximumBudget, $guests]
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $services = $this->ResortService->recommend_within_budget_and_capacity($maximumBudget, $guests);
 
         $source = 'fallback';
         $ranked = [];
@@ -701,13 +637,7 @@ class Api extends Controller
             return;
         }
 
-        $service = $this->db->raw(
-            "SELECT service_id AS id, service_name AS name, service_type, description, price, capacity
-             FROM services
-             WHERE service_id = ? AND is_active = 1
-             LIMIT 1",
-            [$serviceId]
-        )->fetch(PDO::FETCH_ASSOC);
+        $service = $this->ResortService->find_active($serviceId);
         if (!$service) {
             $this->error('Service not found.', 404);
             return;
@@ -763,16 +693,7 @@ class Api extends Controller
             throw $exception;
         }
 
-        $booking = $this->db->raw(
-            "SELECT b.booking_id AS id, b.user_id, b.reference_no, b.check_in_date, b.check_out_date,
-                    b.guest_count AS guests, b.special_requests, b.status, b.total_amount,
-                    bi.service_id, bi.unit_price, bi.subtotal, b.created_at
-             FROM bookings b
-             INNER JOIN booking_items bi ON bi.booking_id = b.booking_id
-             WHERE b.booking_id = ?
-             LIMIT 1",
-            [$bookingId]
-        )->fetch(PDO::FETCH_ASSOC);
+        $booking = $this->Booking->find_with_item($bookingId);
         $this->queue_booking_email($booking, 'submitted');
 
         $this->respond([
@@ -792,18 +713,7 @@ class Api extends Controller
             return;
         }
 
-        $rows = $this->db->raw(
-            "SELECT b.booking_id AS id, b.user_id, b.reference_no, b.check_in_date, b.check_out_date,
-                    b.guest_count AS guests, b.special_requests, b.status, b.total_amount, b.created_at,
-                    bi.service_id, bi.unit_price, bi.subtotal,
-                    s.service_name AS service_name, s.service_type
-             FROM bookings b
-             LEFT JOIN booking_items bi ON bi.booking_id = b.booking_id
-             LEFT JOIN services s ON s.service_id = bi.service_id
-             WHERE b.user_id = ?
-             ORDER BY b.created_at DESC",
-            [(int) $user['id']]
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->Booking->list_for_guest((int) $user['id']);
         $this->respond(['bookings' => $rows]);
     }
 
@@ -822,16 +732,7 @@ class Api extends Controller
             return;
         }
 
-        $booking = $this->db->raw(
-            "SELECT b.booking_id AS id, b.user_id, b.reference_no, b.check_in_date, b.check_out_date,
-                    b.guest_count AS guests, b.status, b.total_amount,
-                    bi.service_id, bi.unit_price, bi.subtotal
-             FROM bookings b
-             LEFT JOIN booking_items bi ON bi.booking_id = b.booking_id
-             WHERE b.booking_id = ? AND b.user_id = ?
-             LIMIT 1",
-            [(int) $bookingId, (int) $user['id']]
-        )->fetch(PDO::FETCH_ASSOC);
+        $booking = $this->Booking->find_for_guest((int) $bookingId, (int) $user['id']);
         if (!$booking) {
             $this->error('Booking not found.', 404);
             return;
@@ -866,14 +767,7 @@ class Api extends Controller
             return;
         }
 
-        $booking = $this->db->raw(
-            "SELECT b.booking_id AS id, b.user_id, b.status, bi.service_id
-             FROM bookings b
-             INNER JOIN booking_items bi ON bi.booking_id = b.booking_id
-             WHERE b.booking_id = ? AND b.user_id = ?
-             LIMIT 1",
-            [(int) $bookingId, (int) $user['id']]
-        )->fetch(PDO::FETCH_ASSOC);
+        $booking = $this->Booking->find_completed_for_guest((int) $bookingId, (int) $user['id']);
         if (!$booking || $booking['status'] !== 'Completed') {
             $this->error('Feedback is allowed only after a completed visit.', 422);
             return;
@@ -913,37 +807,12 @@ class Api extends Controller
             return;
         }
 
-        $pending = $this->db->raw("SELECT COUNT(*) AS total FROM bookings WHERE status = 'Pending'")->fetch(PDO::FETCH_ASSOC);
-        $confirmed = $this->db->raw("SELECT COUNT(*) AS total FROM bookings WHERE status = 'Confirmed'")->fetch(PDO::FETCH_ASSOC);
-        $guests = $this->db->raw("SELECT COUNT(*) AS total FROM users WHERE role = 'guest'")->fetch(PDO::FETCH_ASSOC);
-        $revenue = $this->db->raw("SELECT COALESCE(SUM(total_amount), 0) AS total FROM bookings WHERE status = 'Completed'")->fetch(PDO::FETCH_ASSOC);
-        $latestPending = $this->db->raw(
-            "SELECT b.booking_id AS id, b.reference_no, b.check_in_date, b.check_out_date,
-                    b.guest_count AS guests, b.total_amount, u.full_name AS username,
-                    s.service_name AS service_name
-             FROM bookings b
-             INNER JOIN users u ON u.user_id = b.user_id
-             LEFT JOIN booking_items bi ON bi.booking_id = b.booking_id
-             LEFT JOIN services s ON s.service_id = bi.service_id
-             WHERE b.status = 'Pending'
-             ORDER BY b.created_at DESC
-             LIMIT 10"
-        )->fetchAll(PDO::FETCH_ASSOC);
-
-        $trend = $this->db->raw(
-            "SELECT DATE(created_at) AS report_date, COUNT(*) AS bookings, COALESCE(SUM(total_amount), 0) AS revenue
-             FROM bookings
-             GROUP BY DATE(created_at)
-             ORDER BY report_date ASC"
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $cards = $this->AdminData->dashboard_counts();
+        $latestPending = $this->AdminData->latest_pending_bookings();
+        $trend = $this->AdminData->booking_trend();
 
         $this->respond([
-            'cards' => [
-                'pending' => (int) $pending['total'],
-                'confirmed' => (int) $confirmed['total'],
-                'guests' => (int) $guests['total'],
-                'revenue' => (float) $revenue['total'],
-            ],
+            'cards' => $cards,
             'chart' => $trend,
             'latest_pending' => $latestPending,
         ]);
@@ -961,28 +830,7 @@ class Api extends Controller
 
         $search = trim((string) ($this->request->get('search') ?? ''));
         $status = trim((string) ($this->request->get('status') ?? ''));
-        $params = [];
-        $sql = "SELECT b.booking_id AS id, b.user_id, b.reference_no, b.check_in_date, b.check_out_date,
-                       b.guest_count AS guests, b.status, b.total_amount, b.special_requests, b.created_at,
-                       b.approved_by_admin_id, bi.service_id, bi.unit_price, bi.subtotal,
-                       u.full_name AS username, u.email, s.service_name AS service_name, s.service_type
-                FROM bookings b
-                INNER JOIN users u ON u.user_id = b.user_id
-                LEFT JOIN booking_items bi ON bi.booking_id = b.booking_id
-                LEFT JOIN services s ON s.service_id = bi.service_id
-                WHERE 1=1";
-        if ($status !== '') {
-            $sql .= " AND b.status = ?";
-            $params[] = $status;
-        }
-        if ($search !== '') {
-            $sql .= " AND (b.reference_no LIKE ? OR u.full_name LIKE ? OR s.service_name LIKE ?)";
-            $params[] = '%' . $search . '%';
-            $params[] = '%' . $search . '%';
-            $params[] = '%' . $search . '%';
-        }
-        $sql .= " ORDER BY b.created_at DESC";
-        $rows = $this->db->raw($sql, $params)->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->Booking->list_for_admin($search, $status);
         $this->respond(['bookings' => $rows]);
     }
 
@@ -997,16 +845,7 @@ class Api extends Controller
             return;
         }
 
-        $booking = $this->db->raw(
-            "SELECT b.booking_id AS id, b.user_id, b.reference_no, b.check_in_date, b.check_out_date,
-                    b.guest_count AS guests, b.status, b.total_amount, b.approved_by_admin_id,
-                    bi.service_id, bi.unit_price, bi.subtotal
-             FROM bookings b
-             LEFT JOIN booking_items bi ON bi.booking_id = b.booking_id
-             WHERE b.booking_id = ?
-             LIMIT 1",
-            [(int) $bookingId]
-        )->fetch(PDO::FETCH_ASSOC);
+        $booking = $this->Booking->find_for_admin_update((int) $bookingId);
         if (!$booking) {
             $this->error('Booking not found.', 404);
             return;
@@ -1091,16 +930,7 @@ class Api extends Controller
         if (!$admin) {
             return;
         }
-        $rows = $this->db->raw(
-            "SELECT b.booking_id AS id, b.reference_no, b.check_in_date, b.check_out_date,
-                    b.status, s.service_name AS service_name, u.full_name AS username
-             FROM bookings b
-             LEFT JOIN booking_items bi ON bi.booking_id = b.booking_id
-             LEFT JOIN services s ON s.service_id = bi.service_id
-             INNER JOIN users u ON u.user_id = b.user_id
-             WHERE b.status IN ('Confirmed','Completed')
-             ORDER BY b.check_in_date ASC"
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->Booking->calendar_events();
         $this->respond(['events' => $rows]);
     }
 
@@ -1111,12 +941,7 @@ class Api extends Controller
             if (!$admin) {
                 return;
             }
-            $rows = $this->db->raw(
-                "SELECT service_id AS id, service_name AS name, service_type, description,
-                        price, capacity, image_url, is_active
-                 FROM services
-                 ORDER BY service_id DESC"
-            )->fetchAll(PDO::FETCH_ASSOC);
+            $rows = $this->ResortService->list_for_admin();
             $this->respond(['services' => $rows]);
             return;
         }
@@ -1230,13 +1055,7 @@ class Api extends Controller
             return;
         }
         if ($this->request->is_get()) {
-            $rows = $this->db->raw(
-                "SELECT availability_id AS id, service_id, available_date, total_quantity, booked_quantity
-                 FROM service_availability
-                 WHERE service_id = ?
-                 ORDER BY available_date ASC",
-                [(int) $serviceId]
-            )->fetchAll(PDO::FETCH_ASSOC);
+            $rows = $this->ServiceAvailability->list_for_service((int) $serviceId);
             $this->respond(['availability' => $rows]);
             return;
         }
@@ -1293,19 +1112,7 @@ class Api extends Controller
             return;
         }
         $search = trim((string) ($this->request->get('search') ?? ''));
-        $sql = "SELECT user_id AS id, full_name AS username, email,
-                       CASE WHEN account_status = 'active' THEN 1 ELSE 0 END AS is_active,
-                       created_at
-                FROM users
-                WHERE role = 'guest'";
-        $params = [];
-        if ($search !== '') {
-            $sql .= " AND (full_name LIKE ? OR email LIKE ?)";
-            $params[] = '%' . $search . '%';
-            $params[] = '%' . $search . '%';
-        }
-        $sql .= " ORDER BY created_at DESC";
-        $rows = $this->db->raw($sql, $params)->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->User->list_guests($search);
         $this->respond(['guests' => $rows]);
     }
 
@@ -1339,15 +1146,7 @@ class Api extends Controller
         if (!$admin) {
             return;
         }
-        $rows = $this->db->raw(
-            "SELECT f.feedback_id AS id, f.rating, f.comment, f.created_at,
-                    b.reference_no, u.full_name AS username, s.service_name AS service_name
-             FROM feedback f
-             LEFT JOIN bookings b ON b.booking_id = f.booking_id
-             INNER JOIN users u ON u.user_id = f.user_id
-             LEFT JOIN services s ON s.service_id = f.service_id
-             ORDER BY f.created_at DESC"
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->AdminData->feedback_list();
         $this->respond(['feedback' => $rows]);
     }
 
@@ -1362,14 +1161,7 @@ class Api extends Controller
         }
         $from = (string) ($this->request->get('from') ?? date('Y-m-01'));
         $to = (string) ($this->request->get('to') ?? date('Y-m-d'));
-        $rows = $this->db->raw(
-            "SELECT DATE(created_at) AS report_date, COUNT(*) AS booking_count, COALESCE(SUM(total_amount), 0) AS revenue
-             FROM bookings
-             WHERE DATE(created_at) BETWEEN ? AND ?
-             GROUP BY DATE(created_at)
-             ORDER BY report_date ASC",
-            [$from, $to]
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->AdminData->booking_report($from, $to);
         $this->respond(['reports' => $rows, 'from' => $from, 'to' => $to]);
     }
 
@@ -1382,15 +1174,7 @@ class Api extends Controller
         if (!$admin) {
             return;
         }
-        $rows = $this->db->raw(
-            "SELECT l.activity_id AS id, l.actor_user_id AS admin_user_id,
-                    l.action, l.entity_type, l.entity_id, NULL AS details,
-                    l.created_at, u.full_name AS admin_username
-             FROM activity_logs l
-             INNER JOIN users u ON u.user_id = l.actor_user_id
-             ORDER BY l.created_at DESC
-             LIMIT 200"
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->AdminData->activity_logs();
         $this->respond(['activity_logs' => $rows]);
     }
 
@@ -1402,11 +1186,7 @@ class Api extends Controller
         }
 
         if ($this->request->is_get()) {
-            $settings = $this->db->raw(
-                "SELECT setting_id AS id, setting_key, setting_value, updated_at
-                 FROM system_settings
-                 ORDER BY setting_key"
-            )->fetchAll(PDO::FETCH_ASSOC);
+            $settings = $this->AdminData->system_settings();
             $this->respond(['system_settings' => $settings, 'resort_info' => null]);
             return;
         }
