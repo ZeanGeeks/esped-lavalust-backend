@@ -8,62 +8,62 @@ class ResortService extends Model
 
     public function featured()
     {
-        return $this->raw(
-            "SELECT service_id AS id, service_name AS name, service_type, description, price, capacity
-             FROM services
-             WHERE is_active = 1
-             ORDER BY price ASC
-             LIMIT 6"
-        )->fetchAll(PDO::FETCH_ASSOC);
+        return $this->db->table($this->table)
+            ->select('service_id AS id, service_name AS name, service_type, description, price, capacity')
+            ->where('is_active', 1)
+            ->order_by('price', 'ASC')
+            ->limit(6)
+            ->get_all();
     }
 
     public function search_active($search, $serviceType, $sort)
     {
-        $sql = 'SELECT service_id AS id, service_name AS name, service_type, description, price, capacity, is_active FROM services WHERE is_active = 1';
-        $params = [];
+        $query = $this->db->table($this->table)
+            ->select('service_id AS id, service_name AS name, service_type, description, price, capacity, is_active')
+            ->where('is_active', 1);
+
         if ($serviceType !== '') {
-            $sql .= ' AND service_type = ?';
-            $params[] = $serviceType;
+            $query->where('service_type', $serviceType);
         }
         if ($search !== '') {
-            $sql .= ' AND (service_name LIKE ? OR description LIKE ?)';
-            $params[] = '%' . $search . '%';
-            $params[] = '%' . $search . '%';
+            $query->grouped(function ($query) use ($search) {
+                $searchTerm = '%' . $search . '%';
+                $query->like('service_name', $searchTerm)
+                    ->or_like('description', $searchTerm);
+            });
         }
-        $sql .= ' ORDER BY price ' . strtoupper($sort);
 
-        return $this->raw($sql, $params)->fetchAll(PDO::FETCH_ASSOC);
+        $sort = strtoupper($sort) === 'DESC' ? 'DESC' : 'ASC';
+
+        return $query->order_by('price', $sort)->get_all();
     }
 
     public function recommend_within_budget_and_capacity($maximumBudget, $guests)
     {
-        return $this->raw(
-            "SELECT service_id AS id, service_name AS name, service_type, description, price, capacity
-             FROM services
-             WHERE is_active = 1 AND price <= ? AND capacity >= ?
-             ORDER BY price ASC",
-            [$maximumBudget, $guests]
-        )->fetchAll(PDO::FETCH_ASSOC);
+        return $this->db->table($this->table)
+            ->select('service_id AS id, service_name AS name, service_type, description, price, capacity')
+            ->where('is_active', 1)
+            ->where('price', '<=', $maximumBudget)
+            ->where('capacity', '>=', $guests)
+            ->order_by('price', 'ASC')
+            ->get_all();
     }
 
     public function find_active($serviceId)
     {
-        return $this->raw(
-            "SELECT service_id AS id, service_name AS name, service_type, description, price, capacity
-             FROM services
-             WHERE service_id = ? AND is_active = 1
-             LIMIT 1",
-            [$serviceId]
-        )->fetch(PDO::FETCH_ASSOC);
+        return $this->db->table($this->table)
+            ->select('service_id AS id, service_name AS name, service_type, description, price, capacity')
+            ->where('service_id', $serviceId)
+            ->where('is_active', 1)
+            ->limit(1)
+            ->get();
     }
 
     public function list_for_admin()
     {
-        return $this->raw(
-            "SELECT service_id AS id, service_name AS name, service_type, description,
-                    price, capacity, image_url, is_active
-             FROM services
-             ORDER BY service_id DESC"
-        )->fetchAll(PDO::FETCH_ASSOC);
+        return $this->db->table($this->table)
+            ->select('service_id AS id, service_name AS name, service_type, description, price, capacity, image_url, is_active')
+            ->order_by('service_id', 'DESC')
+            ->get_all();
     }
 }

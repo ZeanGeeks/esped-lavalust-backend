@@ -113,12 +113,10 @@ $config['refresh_token_key'] = getenv('REFRESH_TOKEN_KEY') ?: '';
 | Verify User On Each Request
 |--------------------------------------------------------------------------
 |
-| When TRUE, require_jwt() checks that the token's subject exists in the
-| users table and takes role and scopes from the database instead of
-| trusting the token claims. This costs one indexed query per request.
+| When TRUE, require_jwt() confirms the token subject exists in the users
+| table and obtains role and scopes from that row.
 |
-| Set to FALSE only if your users are not stored in the table below and
-| you perform your own server-side authorization checks.
+| Keep this enabled so deleted or unknown user accounts cannot use JWTs.
 |
 */
 $config['jwt_verify_user'] = TRUE;
@@ -128,9 +126,8 @@ $config['jwt_verify_user'] = TRUE;
 | Users Table
 |--------------------------------------------------------------------------
 |
-| Name of the table holding your users. It needs at least the columns
-| "id" and "role". Used when refreshing tokens and when jwt_verify_user
-| is TRUE.
+| Name of the table holding your users. It needs the configured user ID
+| column and a "role" column for framework-managed JWT verification.
 |
 */
 $config['users_table'] = 'users';

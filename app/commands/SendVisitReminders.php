@@ -28,7 +28,7 @@ class SendVisitReminders
 
         $targetDate = (new DateTime('tomorrow'))->format('Y-m-d');
         $stmt = $pdo->prepare("
-            SELECT b.id, b.reference_no, b.check_in_date, b.check_out_date, b.status, b.user_id, u.email, u.username
+            SELECT b.booking_id, b.reference_no, b.check_in_date, b.check_out_date, b.status, b.user_id, u.email, u.full_name AS username
             FROM bookings b
             INNER JOIN users u ON u.id = b.user_id
             WHERE b.status = 'Confirmed' AND b.check_in_date = ?
@@ -41,11 +41,11 @@ class SendVisitReminders
             $body = "Hello {$booking['username']},\n\nThis is a reminder for your stay tomorrow.\nBooking: {$booking['reference_no']}\nCheck-in: {$booking['check_in_date']}\nCheck-out: {$booking['check_out_date']}\n\nThank you,\nESPED Resort";
 
             $insert = $pdo->prepare("
-                INSERT INTO email_notifications (booking_id, user_id, recipient_email, subject, body, email_type, send_status, created_at)
-                VALUES (?, ?, ?, ?, ?, 'reminder', 'pending', NOW())
+                INSERT INTO email_notifications (booking_id, user_id, notification_type, recipient_email, subject, body, send_status)
+                VALUES (?, ?, 'reminder', ?, ?, ?, 'Pending')
             ");
             $insert->execute([
-                $booking['id'],
+                $booking['booking_id'],
                 $booking['user_id'],
                 $booking['email'],
                 $subject,
@@ -55,11 +55,11 @@ class SendVisitReminders
 
             try {
                 $this->sendWithPhpMailer($booking['email'], $subject, $body);
-                $update = $pdo->prepare("UPDATE email_notifications SET send_status='sent', sent_at=NOW(), error_message=NULL WHERE id = ?");
+                $update = $pdo->prepare("UPDATE email_notifications SET send_status='Sent', sent_at=NOW(), error_message=NULL WHERE notification_id = ?");
                 $update->execute([$notificationId]);
                 echo "Reminder sent for booking {$booking['reference_no']}" . PHP_EOL;
             } catch (Throwable $exception) {
-                $update = $pdo->prepare("UPDATE email_notifications SET send_status='failed', error_message=? WHERE id = ?");
+                $update = $pdo->prepare("UPDATE email_notifications SET send_status='Failed', error_message=? WHERE notification_id = ?");
                 $update->execute([$exception->getMessage(), $notificationId]);
                 echo "Failed reminder for booking {$booking['reference_no']}: {$exception->getMessage()}" . PHP_EOL;
             }

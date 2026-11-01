@@ -55,6 +55,14 @@ unzip main.zip
 
 Configure your web server to point to the project root and ensure `mod_rewrite` (Apache) or equivalent is enabled.
 
+### Local PHP development server
+
+PHP's built-in server does not process `.htaccess`. Start it with the public router script so LavaLust API routes reach the front controller:
+
+```bash
+php -S 127.0.0.1:3000 -t public public/router.php
+```
+
 ---
 
 ## Quick Start
@@ -174,6 +182,17 @@ $database['main'] = array(
     'path'      => ''
 );
 ```
+
+### Database migrations
+
+Run migrations from the project root after configuring the database connection:
+
+```powershell
+php console/cli.php migration status
+php console/cli.php migration run
+```
+
+For a new database, create an empty database first; `migration run` creates the application tables. Migrations are disabled by default in `app/config/migration.php`; enable them before running the CLI command, then disable them again when finished. Do not use `migration refresh` on a database containing data.
 
 ### Base URL
 

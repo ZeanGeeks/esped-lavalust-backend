@@ -136,7 +136,7 @@ $config['log_dir']                  = 'runtime/logs/';
 | Note: This will NOT disable or override the LavaLust-specific
 |	autoloading (app/config/autoload.php)
 */
-$config['composer_autoload']        = FALSE;
+$config['composer_autoload']        = TRUE;
 
 /*
 |--------------------------------------------------------------------------
@@ -402,9 +402,9 @@ $config['security_headers'] = [
     'api_max_body' => 1048576,
     'cors' => [
         'allowed_origins' => $frontend_origin !== '' ? [$frontend_origin] : [],
-        'credentials'     => true,
+        'credentials'     => false,
         'methods'         => 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-        'headers'         => 'Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With',
+        'headers'         => 'Accept, Authorization, Content-Type, X-Requested-With',
         'max_age'         => 600,
     ],
 ];

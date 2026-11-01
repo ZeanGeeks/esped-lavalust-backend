@@ -16,16 +16,6 @@ class ServiceAvailability extends Model
             ->get();
     }
 
-    public function find_for_quantity_update($serviceId, $date)
-    {
-        return $this->db->table($this->table)
-            ->select('availability_id AS id, booked_quantity')
-            ->where('service_id', $serviceId)
-            ->where('available_date', $date)
-            ->limit(1)
-            ->get();
-    }
-
     public function list_for_service($serviceId)
     {
         return $this->db->table($this->table)

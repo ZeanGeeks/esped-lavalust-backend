@@ -47,45 +47,55 @@ defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 $router->get('/', 'Welcome::index');
 $router->get('/api/health', 'Welcome::health');
 
-$router->get('/api/v1/health', 'Api::health');
-$router->get('/api/v1/csrf', 'Api::csrf');
+$router->get('/api/v1/health', 'ApiHealth::health');
 
-$router->post('/api/v1/auth/register', 'Api::register');
-$router->post('/api/v1/auth/login', 'Api::login');
-$router->post('/api/v1/auth/logout', 'Api::logout');
-$router->get('/api/v1/auth/me', 'Api::me');
-$router->put('/api/v1/auth/account', 'Api::update_account');
-$router->put('/api/v1/auth/password', 'Api::update_password');
+$router->post('/api/v1/auth/register', 'Auth::register');
+$router->post('/api/v1/auth/login', 'Auth::login');
+$router->post('/api/v1/auth/refresh', 'Auth::refresh');
+$router->post('/api/v1/auth/logout', 'Auth::logout');
+$router->get('/api/v1/auth/me', 'Auth::me');
+$router->put('/api/v1/auth/account', 'Auth::update_account');
+$router->put('/api/v1/auth/password', 'Auth::update_password');
 
-$router->get('/api/v1/home', 'Api::home');
-$router->get('/api/v1/resort-info', 'Api::resort_info');
-$router->get('/api/v1/services', 'Api::services');
-$router->post('/api/v1/recommendation', 'Api::recommendation');
+$router->get('/api/v1/home', 'PublicApi::home');
+$router->get('/api/v1/resort-info', 'PublicApi::resort_info');
+$router->get('/api/v1/services', 'PublicApi::services');
+$router->get('/api/v1/services/{id}/availability', 'PublicApi::service_availability');
+$router->post('/api/v1/recommendation', 'PublicApi::recommendation');
 
-$router->post('/api/v1/bookings', 'Api::create_booking');
-$router->get('/api/v1/bookings/my', 'Api::my_bookings');
-$router->delete('/api/v1/bookings/{id}/cancel', 'Api::cancel_my_booking');
-$router->post('/api/v1/bookings/{id}/feedback', 'Api::submit_feedback');
+$router->post('/api/v1/bookings', 'BookingApi::create_booking');
+$router->get('/api/v1/bookings/my', 'BookingApi::my_bookings');
+$router->delete('/api/v1/bookings/{id}/cancel', 'BookingApi::cancel_my_booking');
+$router->post('/api/v1/bookings/{id}/feedback', 'BookingApi::submit_feedback');
 
-$router->get('/api/v1/admin/dashboard', 'Api::admin_dashboard');
-$router->get('/api/v1/admin/bookings', 'Api::admin_bookings');
-$router->put('/api/v1/admin/bookings/{id}/confirm', 'Api::admin_confirm_booking');
-$router->put('/api/v1/admin/bookings/{id}/reject', 'Api::admin_reject_booking');
-$router->put('/api/v1/admin/bookings/{id}/complete', 'Api::admin_complete_booking');
-$router->get('/api/v1/admin/bookings/calendar', 'Api::admin_booking_calendar');
+$router->get('/api/v1/admin/dashboard', 'AdminApi::admin_dashboard');
+$router->get('/api/v1/admin/bookings', 'AdminApi::admin_bookings');
+$router->put('/api/v1/admin/bookings/{id}/confirm', 'AdminApi::admin_confirm_booking');
+$router->put('/api/v1/admin/bookings/{id}/reject', 'AdminApi::admin_reject_booking');
+$router->put('/api/v1/admin/bookings/{id}/complete', 'AdminApi::admin_complete_booking');
+$router->get('/api/v1/admin/bookings/calendar', 'AdminApi::admin_booking_calendar');
 
-$router->get('/api/v1/admin/services', 'Api::admin_services');
-$router->post('/api/v1/admin/services', 'Api::admin_services');
-$router->put('/api/v1/admin/services/{id}', 'Api::admin_update_service');
-$router->delete('/api/v1/admin/services/{id}', 'Api::admin_deactivate_service');
-$router->get('/api/v1/admin/services/{id}/availability', 'Api::admin_service_availability');
-$router->put('/api/v1/admin/services/{id}/availability', 'Api::admin_service_availability');
+$router->get('/api/v1/admin/services', 'AdminApi::admin_services');
+$router->post('/api/v1/admin/services', 'AdminApi::admin_services');
+$router->put('/api/v1/admin/services/{id}', 'AdminApi::admin_update_service');
+$router->delete('/api/v1/admin/services/{id}', 'AdminApi::admin_deactivate_service');
+$router->get('/api/v1/admin/services/{id}/availability', 'AdminApi::admin_service_availability');
+$router->put('/api/v1/admin/services/{id}/availability', 'AdminApi::admin_service_availability');
 
-$router->get('/api/v1/admin/guests', 'Api::admin_guests');
-$router->put('/api/v1/admin/guests/{id}/status', 'Api::admin_guest_status');
-$router->get('/api/v1/admin/feedback', 'Api::admin_feedback');
-$router->get('/api/v1/admin/reports', 'Api::admin_reports');
-$router->get('/api/v1/admin/activity-logs', 'Api::admin_activity_logs');
-$router->get('/api/v1/admin/settings', 'Api::admin_settings');
-$router->put('/api/v1/admin/settings', 'Api::admin_settings');
-$router->get('/api/v1/admin/backup/export', 'Api::admin_backup_export');
+$router->get('/api/v1/admin/guests', 'AdminApi::admin_guests');
+$router->put('/api/v1/admin/guests/{id}/status', 'AdminApi::admin_guest_status');
+$router->get('/api/v1/admin/feedback', 'AdminApi::admin_feedback');
+$router->get('/api/v1/admin/reports', 'AdminApi::admin_reports');
+$router->get('/api/v1/admin/activity-logs', 'AdminApi::admin_activity_logs');
+$router->get('/api/v1/admin/settings', 'AdminApi::admin_settings');
+$router->put('/api/v1/admin/settings', 'AdminApi::admin_settings');
+$router->get('/api/v1/admin/backup/export', 'AdminApi::admin_backup_export');
+
+if (defined('IS_CLI') && IS_CLI) {
+    $router->get('/migrate', 'MigrationController::migrate');
+    $router->get('/create-migration/{name}', 'MigrationController::create_migration');
+    $router->get('/rollback', 'MigrationController::rollback');
+    $router->get('/rollback-all', 'MigrationController::rollback_all');
+    $router->get('/refresh', 'MigrationController::refresh');
+    $router->get('/status', 'MigrationController::status');
+}

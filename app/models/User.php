@@ -4,75 +4,91 @@ defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 class User extends Model
 {
     protected $table = 'users';
-    protected $primary_key = 'user_id';
+    protected $primary_key = 'id';
     protected $fillable = [];
-    protected $guarded = ['user_id'];
+    protected $guarded = ['id'];
 
-    public function find_for_session($userId)
+    private function add_is_active($user)
     {
-        return $this->raw(
-            "SELECT user_id AS id, full_name AS username, email, role,
-                    password_hash AS password,
-                    CASE WHEN account_status = 'active' THEN 1 ELSE 0 END AS is_active
-             FROM users
-             WHERE user_id = ?
-             LIMIT 1",
-            [$userId]
-        )->fetch(PDO::FETCH_ASSOC);
+        if (!$user) {
+            return $user;
+        }
+
+        $user['is_active'] = (int) ($user['account_status'] === 'active');
+        unset($user['account_status']);
+
+        return $user;
+    }
+
+    public function find_by_id($userId)
+    {
+        $user = $this->db->table($this->table)
+            ->select('id, full_name AS username, email, role, password_hash AS password, account_status')
+            ->where('id', $userId)
+            ->limit(1)
+            ->get();
+
+        return $this->add_is_active($user);
     }
 
     public function find_for_login($email)
     {
-        return $this->raw(
-            "SELECT user_id AS id, full_name AS username, email, role,
-                    password_hash AS password,
-                    CASE WHEN account_status = 'active' THEN 1 ELSE 0 END AS is_active
-             FROM users
-             WHERE email = ?
-             LIMIT 1",
-            [$email]
-        )->fetch(PDO::FETCH_ASSOC);
+        $user = $this->db->table($this->table)
+            ->select('id, full_name AS username, email, role, password_hash AS password, account_status')
+            ->where('email', $email)
+            ->limit(1)
+            ->get();
+
+        return $this->add_is_active($user);
     }
 
     public function find_notification_recipient($userId)
     {
-        return $this->raw(
-            'SELECT user_id AS id, full_name AS username, email FROM users WHERE user_id = ? LIMIT 1',
-            [$userId]
-        )->fetch(PDO::FETCH_ASSOC);
+        return $this->db->table($this->table)
+            ->select('id, full_name AS username, email')
+            ->where('id', $userId)
+            ->limit(1)
+            ->get();
     }
 
     public function email_is_used_by_another_user($email, $userId)
     {
-        return $this->raw(
-            'SELECT user_id FROM users WHERE email = ? AND user_id <> ? LIMIT 1',
-            [$email, $userId]
-        )->fetch(PDO::FETCH_ASSOC);
+        return $this->db->table($this->table)
+            ->select('id')
+            ->where('email', $email)
+            ->where('id', '<>', $userId)
+            ->limit(1)
+            ->get();
     }
 
     public function find_password($userId)
     {
-        return $this->raw(
-            'SELECT password_hash AS password FROM users WHERE user_id = ? LIMIT 1',
-            [$userId]
-        )->fetch(PDO::FETCH_ASSOC);
+        return $this->db->table($this->table)
+            ->select('password_hash AS password')
+            ->where('id', $userId)
+            ->limit(1)
+            ->get();
     }
 
     public function list_guests($search)
     {
-        $sql = "SELECT user_id AS id, full_name AS username, email,
-                       CASE WHEN account_status = 'active' THEN 1 ELSE 0 END AS is_active,
-                       created_at
-                FROM users
-                WHERE role = 'guest'";
-        $params = [];
-        if ($search !== '') {
-            $sql .= " AND (full_name LIKE ? OR email LIKE ?)";
-            $params[] = '%' . $search . '%';
-            $params[] = '%' . $search . '%';
-        }
-        $sql .= ' ORDER BY created_at DESC';
+        $query = $this->db->table($this->table)
+            ->select('id, full_name AS username, email, account_status, created_at')
+            ->where('role', 'guest');
 
-        return $this->raw($sql, $params)->fetchAll(PDO::FETCH_ASSOC);
+        if ($search !== '') {
+            $query->grouped(function ($query) use ($search) {
+                $query->like('full_name', '%' . $search . '%')
+                    ->or_like('email', '%' . $search . '%');
+            });
+        }
+
+        $guests = $query->order_by('created_at', 'DESC')->get_all();
+        foreach ($guests as &$guest) {
+            $guest = $this->add_is_active($guest);
+        }
+        unset($guest);
+
+        return $guests;
     }
 }
