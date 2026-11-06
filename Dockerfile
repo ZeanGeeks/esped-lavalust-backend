@@ -2,6 +2,12 @@ ARG PHP_VERSION=8.5
  
 FROM php:${PHP_VERSION}-apache
  
+# Install Composer dependencies required by the application.
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+WORKDIR /var/www/html
+COPY composer.json ./
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
 # Install PDO MySQL
 RUN docker-php-ext-install pdo pdo_mysql
  
@@ -11,7 +17,7 @@ RUN a2enmod rewrite
 # Allow .htaccess overrides
 RUN sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
  
-# Copy app files
+# Copy application files
 COPY . /var/www/html/
  
 # Fix permissions

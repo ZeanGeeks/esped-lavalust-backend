@@ -38,6 +38,105 @@ class Auth extends ApiController
         $this->respond(['success' => true, 'message' => 'Guest account created.'], 201);
     }
 
+    public function google()
+    {
+        if ($this->method_not_allowed('POST, OPTIONS')) {
+            return;
+        }
+
+        $clientId = trim((string) getenv('GOOGLE_CLIENT_ID'));
+        if ($clientId === '') {
+            $this->error('Google sign-in is not configured.', 503);
+            return;
+        }
+
+        $data = $this->get_request_data();
+        $credential = trim((string) ($data['credential'] ?? ''));
+        if ($credential === '' || strlen($credential) > 8192) {
+            $this->error('A valid Google credential is required.', 422);
+            return;
+        }
+
+        $curl = curl_init('https://oauth2.googleapis.com/tokeninfo?id_token=' . rawurlencode($credential));
+        if ($curl === false) {
+            $this->error('Google identity verification is temporarily unavailable.', 503);
+            return;
+        }
+
+        curl_setopt_array($curl, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+        $response = curl_exec($curl);
+        $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $requestFailed = $response === false;
+        curl_close($curl);
+
+        if ($requestFailed) {
+            $this->error('Google identity verification is temporarily unavailable.', 503);
+            return;
+        }
+
+        $identity = json_decode($response, true);
+        $issuer = is_array($identity) ? (string) ($identity['iss'] ?? '') : '';
+        $email = is_array($identity) ? trim((string) ($identity['email'] ?? '')) : '';
+        $emailVerified = is_array($identity) && filter_var(
+            $identity['email_verified'] ?? false,
+            FILTER_VALIDATE_BOOLEAN
+        );
+        if (
+            $status !== 200
+            || !is_array($identity)
+            || !in_array($issuer, ['accounts.google.com', 'https://accounts.google.com'], true)
+            || (string) ($identity['aud'] ?? '') !== $clientId
+            || (int) ($identity['exp'] ?? 0) <= time()
+            || empty($identity['sub'])
+            || !$emailVerified
+            || !filter_var($email, FILTER_VALIDATE_EMAIL)
+        ) {
+            $this->error('Invalid or expired Google credential.', 401);
+            return;
+        }
+
+        $user = $this->User->find_for_login($email);
+        if (!$user) {
+            $name = trim((string) ($identity['name'] ?? ''));
+            if ($name === '') {
+                $name = strstr($email, '@', true) ?: $email;
+            }
+
+            $this->db->table('users')->insert([
+                'full_name' => substr($name, 0, 100),
+                'email' => $email,
+                'password_hash' => password_hash(bin2hex(random_bytes(32)), PASSWORD_DEFAULT),
+                'role' => 'guest',
+                'account_status' => 'active',
+                'phone' => null,
+            ]);
+            $user = $this->User->find_for_login($email);
+        }
+
+        if (!$user || (int) $user['is_active'] !== 1) {
+            $this->error('Account is suspended.', 403);
+            return;
+        }
+
+        $tokens = $this->issue_tokens($user);
+        $this->respond([
+            'success' => true,
+            'tokens' => $tokens,
+            'user' => [
+                'id' => (int) $user['id'],
+                'username' => $user['username'],
+                'email' => $user['email'],
+                'role' => $user['role'],
+            ],
+        ]);
+    }
+
     public function login()
     {
         if ($this->method_not_allowed('POST, OPTIONS')) {

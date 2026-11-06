@@ -51,6 +51,7 @@ $router->get('/api/v1/health', 'ApiHealth::health');
 
 $router->post('/api/v1/auth/register', 'Auth::register');
 $router->post('/api/v1/auth/login', 'Auth::login');
+$router->post('/api/v1/auth/google', 'Auth::google');
 $router->post('/api/v1/auth/refresh', 'Auth::refresh');
 $router->post('/api/v1/auth/logout', 'Auth::logout');
 $router->get('/api/v1/auth/me', 'Auth::me');

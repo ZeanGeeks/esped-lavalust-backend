@@ -194,6 +194,12 @@ php console/cli.php migration run
 
 For a new database, create an empty database first; `migration run` creates the application tables. Migrations are disabled by default in `app/config/migration.php`; enable them before running the CLI command, then disable them again when finished. Do not use `migration refresh` on a database containing data.
 
+### Deploying on Render
+
+Connect this GitHub repository to Render as a Docker web service. Leave **Root Directory** blank when this repository is the backend root, so Render can find both `Dockerfile` and `composer.json`. The Docker build installs Composer dependencies and creates `vendor/autoload.php`, which LavaLust requires.
+
+Add the variables from `.env.example` in the Render service's **Environment** settings. Do not commit `.env` or put secrets in frontend variables.
+
 ### Base URL
 
 **File:** `app/config/config.php`
